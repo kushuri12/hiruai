@@ -306,7 +306,7 @@ func _scroll_bottom():
 		return
 	await get_tree().process_frame
 	await get_tree().process_frame
-	scroll.scroll_vertical = scroll.get_v_scroll_bar().max_value
+	scroll.scroll_vertical = int(scroll.get_v_scroll_bar().max_value)
 
 
 func _show_thinking(status: String = "AI is thinking...", phase: String = "scan"):
@@ -629,12 +629,12 @@ func _clean_display_text(text: String) -> String:
 	for m in rx.search_all(result):
 		result = result.replace(m.get_string(), "")
 
-	# FALLSAFE: If AI forgot backticks, any stray [SAVE:...] and everything after it 
-	# should be wiped from the chat so it doesn't flood the UI with raw text!
-	rx.compile("\\[SAVE:[^\\]]+\\](?:[\\s\\S]*)")
-	var failsafe_match = rx.search(result)
-	if failsafe_match:
-		result = result.substr(0, failsafe_match.get_start())
+	# FALLSAFE: If AI forgot backticks, we should hide the raw text dump but NOT 
+	# truncate the entire message if there's text AFTER it.
+	# We'll replace it with a placeholder instead of truncating.
+	rx.compile("\\[SAVE:[^\\]]+\\](?:[\\s\\S]*?)(?=\\n\\n|\\n[a-zA-Z]|[\\!\\[]|$)")
+	for m in rx.search_all(result):
+		result = result.replace(m.get_string(), "[i](Code block hidden)[/i]")
 
 	# Remove [READ:path] tags
 	rx.compile("\\[READ:[^\\]]+\\]")
@@ -875,6 +875,7 @@ func _on_accept_changes():
 			if fs:
 				fs.update_file(path)
 				# Force reload if it's an open script
+				# This can be slow, so we only do it for GDScript
 				if path.ends_with(".gd"):
 					var res = load(path)
 					if res is Script:
@@ -895,7 +896,9 @@ func _on_accept_changes():
 
 	# Force Godot to recognize the new files
 	if fs:
-		fs.re_scan_resources()
+		# Use scan() instead of re_scan_resources() for better performance
+		fs.scan()
+		
 		# Wait just one frame for the OS to flush if needed
 		await get_tree().process_frame
 		
@@ -1323,7 +1326,10 @@ func _show_settings():
 # ══════════════════ SYSTEM PROMPT ══════════════════
 
 func _system_prompt() -> String:
-	return """You are an expert Godot 4.x GDScript developer. You have direct control over the user's project files.
+	return """You are a helpful and expert AI Assistant for Godot 4.x (GDScript).
+You have direct control over the user's project files.
+Be conversational, friendly, and act as a professional assistant (asisten).
+You can discuss ideas, explain logic, and help with project structure.
 
 ═══ AVAILABLE COMMANDS ═══
 [SEARCH:keyword] — Search for a class, func, or var definition across all files
@@ -1338,59 +1344,31 @@ To SAVE/OVERWRITE a file, you MUST use this EXACT format WITH the markdown backt
 
 [DELETE:res://path/file.gd] — Delete a file
 
-═══ STRICT RULES (MUST follow, no exceptions) ═══
+═══ BEHAVIOR & RULES ═══
 
-1. READ BEFORE EDIT (MANDATORY):
+1. BE A TRUE ASSISTANT:
+   - Don't just dump code. Explain WHY you chose an approach if it's complex.
+   - If the user asks for advice, give it before or after the code tags.
+   - You can discuss game design, performance, and best practices.
+
+2. READ BEFORE EDIT (MANDATORY):
    - You MUST [READ:] or [SEARCH:] a file BEFORE editing it. NEVER guess.
    - If you can't find a function, use [SEARCH:function_name] first.
    - If the user says "edit X", your FIRST response must be [READ:res://path/to/X].
-   - NEVER write code for a file you haven't read. This is the #1 rule.
    - DO NOT ask for permission to read. Just use the [READ:]/[READ_LINES:] tag IMMEDIATELY.
 
-2. COMPLETE FILE ONLY & FORMATTING STRICTNESS:
-   - When using [SAVE:], you MUST include the ENTIRE file content, not just the changed parts.
-   - NEVER use comments like "# ... rest of code ..." or "# existing code here".
-   - CRITICAL: GDScript is indentation-based! You MUST put a line break (ENTER) after EVERY statement.
+3. COMPLETE FILE ONLY:
+   - When using [SAVE:], you MUST include the ENTIRE file content.
+   - NEVER use comments like "# ... rest of code ...".
+
+4. FORMATTING STRICTNESS:
+   - GDScript is indentation-based! Put a line break (ENTER) after EVERY statement.
    - NEVER write multiple statements on the same line. 
-   - BAD: `extends Node var x = 1 func start(): pass`
-   - GOOD:
-```gdscript
-extends Node
-
-var x = 1
-
-func start():
-	pass
-```
-
-3. PRESERVE EXISTING CODE:
-   - Keep ALL existing functions, variables, signals, extends, class_name UNCHANGED unless the user explicitly asks to change them.
-   - Do NOT rename variables. Do NOT reorganize code. Do NOT refactor.
-   - Do NOT remove existing code unless the user asks you to.
-   - If the file has 200 lines, your SAVE must also have ~200 lines (plus/minus your changes).
-
-4. DO EXACTLY WHAT IS ASKED — NOTHING MORE:
-   - Add ONLY what the user requests. No bonus features.
-   - Do NOT add extra variables, functions, signals, or nodes that weren't asked for.
-   - Do NOT add print() statements unless asked.
-   - Do NOT add comments explaining the code unless asked.
-   - Do NOT suggest or implement improvements the user didn't request.
 
 5. GODOT 4.x SYNTAX ONLY:
-   - Use @export, @onready, @tool (NOT export, onready, tool).
-   - Use signal declarations: signal name(params) (NOT func-based signals).
-   - Use snake_case for functions/variables, PascalCase for classes/nodes.
-   - Use StringName (&"name") for signal connections when appropriate.
-   - Use typed variables where possible (var x: int = 0).
+   - Use @export, @onready, @tool, snake_case, signal connections, etc.
 
-6. PATH & SAFETY:
-   - ALL paths must use res:// prefix.
-   - NEVER touch: addons/godot_ai_agent/, .godot/, .import/, .git/
-   - Modify EXISTING files. Do NOT create new files unless explicitly asked.
-   - READ only 1-2 files per response, not all files at once.
-
-7. RESPONSE FORMAT:
-   - Keep explanations to 1-2 sentences MAX. Focus on the code.
-   - State what you changed in a brief list, not paragraphs.
-   - .tscn files: use [gd_scene format=3] format. Keep minimal.
+6. RESPONSE FORMAT:
+   - You can write paragraphs for explanation.
+   - Use brief lists for change logs.
    - If unsure about something, ASK the user. Don't guess."""
