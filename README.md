@@ -78,7 +78,7 @@ AI Agent Dock (sidebar)
     │  HTTPRequest (HTTPS)
     ▼
 NVIDIA API
-  model: qwen/qwen3-coder-480b-a35b-instruct
+  model: moonshotai/kimi-k2-instruct
   endpoint: /v1/chat/completions
 ```
 
