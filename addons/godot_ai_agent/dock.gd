@@ -8,7 +8,7 @@ extends VBoxContainer
 var kimi: Node
 var chat_container: VBoxContainer
 var scroll: ScrollContainer
-var input_field: LineEdit
+var input_field: TextEdit
 var send_btn: Button
 var status_label: Label
 var toolbox_panel: VBoxContainer
@@ -92,7 +92,7 @@ func _build_header():
 	hbox.add_theme_constant_override("separation", 8)
 
 	var title = Label.new()
-	title.text = "🤖 Godot AI"
+	title.text = "🤖 Hiru AI"
 	title.add_theme_color_override("font_color", C_ACCENT)
 	title.add_theme_font_size_override("font_size", 13)
 	title.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.5))
@@ -150,15 +150,20 @@ func _build_input_area():
 	var hbox = HBoxContainer.new()
 	hbox.add_theme_constant_override("separation", 6)
 
-	input_field = LineEdit.new()
+	input_field = TextEdit.new()
 	input_field.placeholder_text = "Message Godot AI..."
 	input_field.size_flags_horizontal = SIZE_EXPAND_FILL
-	input_field.custom_minimum_size = Vector2(0, 36)
-	input_field.text_submitted.connect(_on_text_submitted)
+	input_field.custom_minimum_size = Vector2(0, 80) # Fixed height
+	input_field.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
+	input_field.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	input_field.scroll_fit_content_height = false # Prevent covering the UI
+	input_field.gui_input.connect(_on_input_gui_input)
+	
 	var style := _sb(C_BG, 10, true, C_ACCENT.darkened(0.6))
 	input_field.add_theme_stylebox_override("normal", style)
 	input_field.add_theme_stylebox_override("focus", _sb(C_BG, 10, true, C_ACCENT))
 	input_field.add_theme_color_override("font_color", C_TEXT)
+	input_field.add_theme_font_size_override("font_size", 14)
 	
 	send_btn = Button.new()
 	send_btn.text = " ➤ "
@@ -313,7 +318,7 @@ func _add_msg(role: String, text: String):
 
 	match role:
 		"ai":
-			bg = C_AI_BG; prefix = "🤖 AI"; pcol = C_AI
+			bg = C_AI_BG; prefix = "🤖 Hiru"; pcol = C_AI
 		"user":
 			bg = C_USER_BG; prefix = "👤 You"; pcol = C_USER
 		"system":
@@ -341,6 +346,7 @@ func _add_msg(role: String, text: String):
 	var content = RichTextLabel.new()
 	content.bbcode_enabled = true
 	content.fit_content = true
+	content.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	content.scroll_active = false
 	content.size_flags_horizontal = SIZE_EXPAND_FILL
 	content.text = _fmt(text)
@@ -513,7 +519,7 @@ func _hide_thinking():
 
 
 func _add_welcome():
-	_add_msg("ai", "Hello! I'm your Godot AI Agent with full project control.\n\nI can:\n• 📖 READ your .gd and .tscn files\n• 💾 CREATE & EDIT scripts and scenes\n• 🗑️ DELETE files\n• 🔧 FIX errors from Godot log\n• 📂 Scan your entire project\n\nI always read your code before editing — I won't make random changes.\n\nFirst, click ⚙️ to set your NVIDIA API key!")
+	_add_msg("ai", "Halo! Nama saya **Hiru**, asisten AI Godot pribadi Anda.\n\nSaya bisa membantumu:\n• 📖 MEMBACA file .gd dan .tscn\n• 💾 MEMBUAT & EDIT script\n• 🗑️ MENGHAPUS file\n• 🔧 MEMPERBAIKI error dari log Godot\n• 🔄 SELF-HEALING (Auto-debug)\n\nSilakan klik ikon ⚙️ di pojok kanan atas untuk mengatur API Key dan model pilihanmu!")
 
 
 # ══════════════════ SEND LOGIC ══════════════════
@@ -521,8 +527,15 @@ func _add_welcome():
 func _on_send_pressed():
 	_send(input_field.text)
 
-func _on_text_submitted(text: String):
-	_send(text)
+func _on_text_submitted(_text: String):
+	_send(input_field.text)
+
+func _on_input_gui_input(event: InputEvent):
+	if event is InputEventKey and event.pressed:
+		if event.keycode == KEY_ENTER and not event.shift_pressed:
+			# Prevent new line and send message instead
+			get_viewport().set_input_as_handled()
+			_send(input_field.text)
 
 func _send(text: String):
 	if text.strip_edges().is_empty():
@@ -1523,9 +1536,10 @@ func _extract_run_game(text: String) -> String:
 # ══════════════════ SYSTEM PROMPT ══════════════════
 
 func _system_prompt() -> String:
-	return """You are a helpful and expert AI Assistant for Godot 4.x (GDScript).
+	return """You are personalized AI Assistant for Godot 4.x (GDScript) named Hiru.
 You have direct control over the user's project files.
 Be conversational, friendly, and act as a professional assistant (asisten).
+Always refer to yourself as Hiru if asked for your name.
 You can discuss ideas, explain logic, and help with project structure.
 
 ═══ AVAILABLE COMMANDS ═══

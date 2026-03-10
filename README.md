@@ -1,6 +1,6 @@
-# 🤖 Godot AI Agent — Your Professional Game Dev Partner
+# 🤖 Hiru — Your Professional Godot AI Assistant
 
-An advanced AI sidebar plugin for **Godot 4.x** that gives you full control over your project through natural conversation. Built with a premium, modern aesthetic inspired by **Cursor**, **Antigravity**, and **VS Code Copilot**.
+An advanced AI sidebar plugin for **Godot 4.x** (named **Hiru**) that gives you full control over your project through natural conversation. Built with a premium, modern aesthetic inspired by **Cursor**, **Antigravity**, and **VS Code Copilot**.
 
 Powered by **moonshotai/kimi-k2-instruct** (or your choice of **Llama 3.1**, **Nemotron**, etc.) via **NVIDIA API**.
 
