@@ -2,7 +2,7 @@
 
 An advanced, elite-level AI programming agent for **Godot 4.x**. Built with a premium aesthetic and capabilities inspired by **Cursor**, **Copilot**, and **Windsurf**. Hiru doesn't just autocomplete code; it reads your project files, plans its actions, and modifies your game directly—all while you watch.
 
-Powered by **DeepSeek-R1**, **Claude 3.5 Sonnet**, **GPT-4o**, and more via **NVIDIA NIM** and **Puter.com**.
+Powered by **GLM 4.7**, **Claude 4.6 Sonnet**, **GPT-4o**, and more via **NVIDIA NIM** and **Puter.com**.
 
 > **🚀 No Middleman:** No Python, no external servers, and no complex setup. Everything runs natively inside Godot using GDScript via direct Server-Sent Events (SSE).
 
@@ -13,7 +13,7 @@ Powered by **DeepSeek-R1**, **Claude 3.5 Sonnet**, **GPT-4o**, and more via **NV
 | Feature                     | Description                                                                                      |
 | :-------------------------- | :----------------------------------------------------------------------------------------------- |
 | ⚡ **Real-Time Streaming**  | Watch the AI type its responses token-by-token instantly. No more waiting!                       |
-| 🧠 **Reasoning & Thinking** | Support for **DeepSeek-R1** and **OpenAI o1** stage-thinking (Chain-of-Thought) with live cards. |
+| 🧠 **Reasoning & Thinking** | Support for **GLM 4.7**, **Claude 4.6 Sonnet**, **GPT-4o**, and more via **NVIDIA NIM** and **Puter.com**. |
 | 📡 **Live Activity Feed**   | Similar to Cursor, see a live feed of what the AI is currently doing _(Reading... Scanning...)_. |
 | 🔄 **Self-Healing Loop**    | AI automatically runs your game after edits, monitors logs, and fixes bugs autonomously!         |
 | ⚖️ **Dual API Keys**        | Support for **NVIDIA NIM** and **Puter.com** with separate, independent API keys.                |
