@@ -17,6 +17,7 @@ const C_READ := Color("#3b82f6") # Info Blue
 const C_DELETE := Color("#f87171") # Warning Red
 const C_SYS := Color("#facc15") # System Yellow
 const C_BTN_HOVER := Color("#252538")
+const C_THINK := Color("#d946ef") # Neon Fuchsia
 
 # Aliases for backward compatibility
 const C_BTN := Color("#1a1a2e")
@@ -29,5 +30,5 @@ const C_AI := Color("#90caf9")
 const C_CREATE := Color("#ab47bc")
 
 # ──────────────────── Config ────────────────────
-const MAX_READ_LOOPS := 30
+const MAX_READ_LOOPS := 5
 

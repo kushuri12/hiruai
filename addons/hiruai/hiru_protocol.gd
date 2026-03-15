@@ -2,6 +2,25 @@
 extends Node
 class_name HiruProtocol
 
+static func sanitize_path(path: String) -> String:
+	path = path.strip_edges()
+	# Only allow res://
+	if not path.begins_with("res://"):
+		if path.begins_with("/"): path = "res://" + path.substr(1)
+		else: path = "res://" + path
+	
+	# Block path traversal
+	if ".." in path or "//" in path.replace("res://", ""):
+		return ""
+		
+	# Validate extension
+	var valid_ext = ["gd", "tscn", "tres", "cfg", "json", "txt", "md"]
+	var ext = path.get_extension().to_lower()
+	if ext not in valid_ext and ext != "":
+		return ""
+		
+	return path
+
 static func extract_searches(text: String) -> Array[String]:
 	var results: Array[String] = []
 	var rx = RegEx.new()
@@ -29,7 +48,7 @@ static func extract_reads(text: String) -> Array[String]:
 				break
 		
 		p = p.replace(" ", "").replace("\n", "").replace("\r", "").strip_edges()
-		if p != "" and not p.begins_with("res://"): p = "res://" + p.trim_prefix("/")
+		p = sanitize_path(p)
 		if p != "" and p not in paths: paths.append(p)
 	return paths
 
@@ -43,16 +62,16 @@ static func extract_read_lines(text: String) -> Array[Dictionary]:
 	rx2.compile("<read_lines:([^:]+):(\\d+)-(\\d+)>")
 	
 	for m in rx.search_all(text):
-		var p = m.get_string(1).replace(" ", "").replace("\n", "").replace("\r", "").strip_edges()
-		if not p.begins_with("res://"): p = "res://" + p.trim_prefix("/")
+		var p = sanitize_path(m.get_string(1).replace(" ", ""))
+		if p == "": continue
 		results.append({
 			"path": p,
 			"start": int(m.get_string(2)),
 			"end": int(m.get_string(3))
 		})
 	for m in rx2.search_all(text):
-		var p = m.get_string(1).replace(" ", "").replace("\n", "").replace("\r", "").strip_edges()
-		if not p.begins_with("res://"): p = "res://" + p.trim_prefix("/")
+		var p = sanitize_path(m.get_string(1).replace(" ", ""))
+		if p == "": continue
 		results.append({
 			"path": p,
 			"start": int(m.get_string(2)),
@@ -72,19 +91,76 @@ static func extract_replaces(text: String) -> Array[Dictionary]:
 		var rx = RegEx.new()
 		rx.compile(p_str)
 		for m in rx.search_all(text):
-			var p = m.get_string(1).strip_edges()
-			if not p.begins_with("res://"): p = "res://" + p.trim_prefix("/")
-			var content = m.get_string(4)
-			# Fallback if XML content wasn't in backticks
-			if content == "" and m.get_group_count() >= 4: content = m.get_string(4)
+			var p = sanitize_path(m.get_string(1).strip_edges())
+			if p == "": continue
+			
+			var content = ""
+			if m.get_group_count() >= 4:
+				content = m.get_string(4)
+			
+			if content.strip_edges() == "": continue
 			
 			results.append({
 				"path": p,
 				"start": int(m.get_string(2)),
 				"end": int(m.get_string(3)),
-				"content": content
+				"content": clean_code_block(content)
 			})
+			
+	# Priority 2: Loose [REPLACE:] without backticks
+	var rx_loose = RegEx.new()
+	rx_loose.compile("\\[REPLACE:\\s*(.+?)\\s*:\\s*(\\d+)\\s*-\\s*(\\d+)\\s*\\]")
+	var loose_matches = rx_loose.search_all(text)
+	for i in loose_matches.size():
+		var p = sanitize_path(loose_matches[i].get_string(1).strip_edges())
+		if p == "": continue
+		
+		# Avoid double counting if already captured by backtick pattern
+		var already = false
+		for r in results:
+			if r["path"] == p and r["start"] == int(loose_matches[i].get_string(2)):
+				already = true; break
+		if already: continue
+		
+		var start_pos = loose_matches[i].get_end()
+		var end_pos = text.length()
+		
+		# Look for next protocol tag or end of string
+		var terminator_tags = ["[THOUGHT", "[SAVE:", "[REPLACE:", "[/REPLACE]", "[READ:", "[SEARCH:", "```"]
+		for tag in terminator_tags:
+			var found = text.find(tag, start_pos)
+			if found != -1 and found < end_pos:
+				end_pos = found
+				
+		var block_content = text.substr(start_pos, end_pos - start_pos).strip_edges()
+		if block_content != "" and block_content.length() > 5:
+			results.append({
+				"path": p,
+				"start": int(loose_matches[i].get_string(2)),
+				"end": int(loose_matches[i].get_string(3)),
+				"content": clean_code_block(block_content)
+			})
+			
 	return results
+
+static func clean_code_block(text: String) -> String:
+	"""Removes line number prefixes like '  49 | ' WITHOUT touching code indentation.
+	
+	CRITICAL: strip_edges() removes ALL leading whitespace including TABS.
+	GDScript uses tabs for indentation — strip_edges() on the full block = instant crash.
+	Rule: ONLY strip leading blank newlines (never spaces/tabs) and trailing whitespace."""
+	var result := text
+	# Strip only leading blank newlines — tabs at line start belong to code
+	while result.length() > 0 and (result.left(1) == "\n" or result.left(1) == "\r"):
+		result = result.substr(1)
+	# Strip trailing whitespace only (right side)
+	result = result.strip_edges(false, true)
+	# Remove line-number prefix format: '  49 | ' — spaces+digits+pipe+ONE space
+	# Stopping at exactly one literal space means the next char (a tab) is preserved
+	var rx := RegEx.new()
+	rx.compile("(?m)^ *\\d+ *[|:] ")
+	result = rx.sub(result, "", true)
+	return result
 
 static func extract_scene_scans(text: String) -> Array[String]:
 	var results: Array[String] = []
@@ -94,10 +170,9 @@ static func extract_scene_scans(text: String) -> Array[String]:
 		var p = ""
 		for i in range(1, 4):
 			if m.get_string(i) != "":
-				p = m.get_string(i).strip_edges()
+				p = sanitize_path(m.get_string(i).strip_edges())
 				break
-		if not p.begins_with("res://"): p = "res://" + p.trim_prefix("/")
-		if p not in results: results.append(p)
+		if p != "" and p not in results: results.append(p)
 	return results
 
 static func extract_thoughts(text: String, allow_partial: bool = false) -> String:
@@ -144,15 +219,16 @@ static func extract_saves(text: String) -> Array[Dictionary]:
 		var rx = RegEx.new()
 		rx.compile(pattern)
 		for m in rx.search_all(text):
-			var path = m.get_string(1).strip_edges()
-			var content = m.get_string(2).strip_edges()
+			var path = sanitize_path(m.get_string(1).strip_edges())
+			if path == "": continue
+			var content = clean_code_block(m.get_string(2))
 			if content == "" and m.get_group_count() >= 3:
-				content = m.get_string(3).strip_edges()
+				content = clean_code_block(m.get_string(3))
 			
 			if content != "" and not _is_path_already_saved(saves, path):
 				saves.append({
 					"path": path,
-					"content": clean_extraneous_gdscript(content)
+					"content": clean_extraneous_gdscript(content) if path.ends_with(".gd") else content
 				})
 				claimed_blocks.append(content)
 
@@ -188,19 +264,22 @@ static func extract_saves(text: String) -> Array[Dictionary]:
 				if cm: found_path = cm.get_string(1).strip_edges()
 		
 		if found_path != "" and not _is_path_already_saved(saves, found_path):
-			saves.append({
-				"path": found_path,
-				"content": clean_extraneous_gdscript(raw_content)
-			})
-			claimed_blocks.append(raw_content)
+			found_path = sanitize_path(found_path)
+			if found_path != "":
+				var cleaned := clean_code_block(raw_content)
+				saves.append({
+					"path": found_path,
+					"content": clean_extraneous_gdscript(cleaned) if found_path.ends_with(".gd") else cleaned
+				})
+				claimed_blocks.append(raw_content)
 
 	# Priority 3: Loose [SAVE:] without backticks (stops at next protocol tag)
 	var rx_loose = RegEx.new()
 	rx_loose.compile("\\[SAVE:([^\\]]+)\\]")
 	var loose_matches = rx_loose.search_all(text)
 	for i in loose_matches.size():
-		var path = loose_matches[i].get_string(1).strip_edges()
-		if _is_path_already_saved(saves, path): continue
+		var path = sanitize_path(loose_matches[i].get_string(1).strip_edges())
+		if path == "" or _is_path_already_saved(saves, path): continue
 		
 		var start_pos = loose_matches[i].get_end()
 		var end_pos = text.length()
@@ -226,9 +305,10 @@ static func extract_saves(text: String) -> Array[Dictionary]:
 			
 		var block_content = text.substr(start_pos, end_pos - start_pos).strip_edges()
 		if block_content != "":
+			var cleaned := strip_code_boilerplate(clean_code_block(block_content))
 			saves.append({
 				"path": path,
-				"content": clean_extraneous_gdscript(strip_code_boilerplate(block_content))
+				"content": clean_extraneous_gdscript(cleaned) if path.ends_with(".gd") else cleaned
 			})
 			
 	return saves
@@ -247,21 +327,30 @@ static func clean_extraneous_gdscript(code: String) -> String:
 	return result
 
 static func strip_code_boilerplate(block: String) -> String:
+	"""Strips markdown/language label boilerplate before actual code begins.
+	Only skips lines BEFORE the first real GDScript/TSCN keyword is found.
+	Once we're in code, ALL lines (including indented ones) are kept as-is."""
 	var lines = block.split("\n")
 	var result = []
 	var in_code = false
 	for line in lines:
-		var ln = line.strip_edges()
 		if not in_code:
+			# Check the stripped version to detect keywords, but keep original line intact
+			var ln = line.strip_edges()
 			var test_ln = ln
 			if test_ln.begins_with("gdscript"): test_ln = test_ln.substr(8).strip_edges()
-			if test_ln.begins_with("extends ") or test_ln.begins_with("class_name ") or test_ln.begins_with("@") or test_ln.begins_with("func ") or test_ln.begins_with("var ") or test_ln.begins_with("const ") or test_ln.begins_with("signal ") or test_ln.begins_with("#"):
-				in_code = true
-				if test_ln != ln: line = line.replace("gdscript", "").strip_edges()
-			elif test_ln.begins_with("[gd_scene ") or test_ln.begins_with("[gd_resource "):
-				in_code = true
-				if test_ln != ln: line = line.replace("gdscript", "").strip_edges()
-		if in_code: result.append(line)
+			if test_ln.begins_with("extends ") or test_ln.begins_with("class_name ") \
+				or test_ln.begins_with("@") or test_ln.begins_with("func ") \
+				or test_ln.begins_with("var ") or test_ln.begins_with("const ") \
+				or test_ln.begins_with("signal ") or test_ln.begins_with("#") \
+				or test_ln.begins_with("[gd_scene ") or test_ln.begins_with("[gd_resource "):
+					in_code = true
+					# Strip 'gdscript' label if it was fused onto the first keyword
+					if test_ln != ln:
+						line = line.replace("gdscript", "").strip_edges()
+		# Once in code: append the original line unchanged (tabs intact)
+		if in_code:
+			result.append(line)
 	if result.is_empty(): return block.strip_edges()
 	return "\n".join(result).strip_edges()
 
@@ -273,9 +362,8 @@ static func extract_deletes(text: String) -> Array[String]:
 		var p = ""
 		for i in range(1, 4):
 			if m.get_string(i) != "":
-				p = m.get_string(i).strip_edges()
+				p = sanitize_path(m.get_string(i).strip_edges())
 				break
-		if p != "" and not p.begins_with("res://"): p = "res://" + p.trim_prefix("/")
 		if p != "" and p not in paths: paths.append(p)
 	return paths
 
@@ -319,7 +407,6 @@ static func extract_diffs(text: String) -> Array[String]:
 	rx.compile("\\[DIFF:([^\\]]+)\\]|<diff:([^>]+)>")
 	for m in rx.search_all(text):
 		var p = m.get_string(1) if m.get_string(1) != "" else m.get_string(2)
-		p = p.strip_edges()
-		if p != "" and not p.begins_with("res://"): p = "res://" + p.trim_prefix("/")
+		p = sanitize_path(p)
 		if p != "" and p not in paths: paths.append(p)
 	return paths

@@ -4,11 +4,11 @@ extends Node
 ## Delivers AI tokens in real-time via SSE (Server-Sent Events).
 ## No Python backend needed.
 
-signal chat_completed(response_text: String)
+signal chat_completed(text: String, finish_reason: String)
 signal chat_error(error_message: String)
 signal token_received(token: String) # NEW: fires per-token for streaming UI
 signal stream_started() # NEW: fires when first token arrives
-signal stream_finished(full_text: String) # NEW: fires when stream is done
+signal stream_finished(full_text: String, finish_reason: String) # NEW: fires when stream is done
 
 const PROVIDERS = {
 	"NVIDIA": "https://integrate.api.nvidia.com/v1",
@@ -53,6 +53,7 @@ var _is_streaming := false
 var _cancel_requested := false
 var _accumulated_text := ""
 var _stream_byte_buffer := PackedByteArray()
+var _last_finish_reason := "stop"
 
 # Retry config
 const MAX_RETRIES := 2
@@ -238,10 +239,11 @@ func _do_stream_request(messages: Array):
 		var error_text = error_body.get_string_from_utf8()
 		_stream_http.close()
 
-		# Try retry
+		# Try retry with exponential backoff
 		if _retry_count < MAX_RETRIES:
+			var backoff = pow(2, _retry_count)
 			_retry_count += 1
-			await get_tree().create_timer(RETRY_DELAY).timeout
+			await get_tree().create_timer(backoff).timeout
 			if not _cancel_requested:
 				_do_stream_request(messages)
 			return
@@ -249,6 +251,7 @@ func _do_stream_request(messages: Array):
 		_is_busy = false
 		_is_streaming = false
 		_parse_error_response(response_code, error_text)
+		if _stream_http: _stream_http.close()
 		return
 
 	# Stream is live! Emit start signal
@@ -296,8 +299,13 @@ func _do_stream_request(messages: Array):
 		chat_error.emit("Empty response from AI after streaming.")
 		return
 
-	stream_finished.emit(_accumulated_text)
-	chat_completed.emit(_accumulated_text)
+	# ─── Finalize and Cleanup ───
+	if _accumulated_text.contains("[THOUGHT]") and not _accumulated_text.contains("[/THOUGHT]"):
+		_accumulated_text += "\n[/THOUGHT]"
+		token_received.emit("\n[/THOUGHT]")
+		
+	stream_finished.emit(_accumulated_text, _last_finish_reason)
+	chat_completed.emit(_accumulated_text, _last_finish_reason)
 
 
 func _process_sse_byte_buffer(force_last_line: bool = false):
@@ -342,7 +350,12 @@ func _process_sse_byte_buffer(force_last_line: bool = false):
 
 		var data = json.data
 		if data is Dictionary and data.has("choices") and data["choices"].size() > 0:
-			var delta = data["choices"][0].get("delta", {})
+			var choice = data["choices"][0]
+			var delta = choice.get("delta", {})
+			
+			if choice.has("finish_reason") and choice["finish_reason"] != null:
+				_last_finish_reason = choice["finish_reason"]
+				
 			if delta is Dictionary:
 				var content = delta.get("content", "")
 				var reasoning = delta.get("reasoning_content", "")
@@ -397,11 +410,12 @@ func _on_request_completed(result: int, code: int, _headers: PackedStringArray, 
 	_is_busy = false
 
 	if result != HTTPRequest.RESULT_SUCCESS:
-		# Retry logic for non-streaming
+		# Retry logic for non-streaming with exponential backoff
 		if _retry_count < MAX_RETRIES:
+			var backoff = pow(2, _retry_count)
 			_retry_count += 1
 			_is_busy = true
-			await get_tree().create_timer(RETRY_DELAY).timeout
+			await get_tree().create_timer(backoff).timeout
 			if not _cancel_requested:
 				_fallback_non_streaming(_last_messages)
 			return
@@ -432,11 +446,22 @@ func _on_request_completed(result: int, code: int, _headers: PackedStringArray, 
 
 	var data = json.data
 	if data.has("choices") and data["choices"] is Array and data["choices"].size() > 0:
-		var choice: Dictionary = data["choices"][0]
-		var message: Dictionary = choice.get("message", {})
-		var content: String = message.get("content", "")
-		var reasoning: String = message.get("reasoning_content", "")
-		if reasoning == "": reasoning = message.get("thought", "")
+		var choice = data["choices"][0]
+		if not choice is Dictionary:
+			chat_error.emit("Unexpected response format: choice is not a dictionary.")
+			return
+			
+		var message = choice.get("message")
+		if not message is Dictionary:
+			chat_error.emit("Unexpected response format: message is missing or invalid.")
+			return
+			
+		var content_raw = message.get("content")
+		var content: String = content_raw if content_raw is String else ""
+		
+		var reasoning_raw = message.get("reasoning_content")
+		if reasoning_raw == null: reasoning_raw = message.get("thought")
+		var reasoning: String = reasoning_raw if reasoning_raw is String else ""
 		
 		var full_res = ""
 		if reasoning != "":
@@ -446,7 +471,7 @@ func _on_request_completed(result: int, code: int, _headers: PackedStringArray, 
 		if full_res.is_empty():
 			chat_error.emit("Empty response from AI.")
 		else:
-			chat_completed.emit(full_res)
+			chat_completed.emit(full_res, "stop")
 	else:
 		chat_error.emit("Unexpected response format from API.")
 

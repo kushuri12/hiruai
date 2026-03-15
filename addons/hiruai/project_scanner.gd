@@ -85,12 +85,23 @@ static func read_file(path: String) -> String:
 	var file = FileAccess.open(path, FileAccess.READ)
 	if not file:
 		return "Error: Cannot read " + path
-	var content = file.get_as_text()
+	
+	var length = file.get_length()
+	const MAX_SIZE = 51200 # 50KB
+	
+	var content = ""
+	var is_truncated = false
+	
+	if length > MAX_SIZE:
+		content = file.get_buffer(MAX_SIZE).get_string_from_utf8()
+		is_truncated = true
+	else:
+		content = file.get_as_text()
 	file.close()
 	
 	var lines = content.split("\n")
 	var total_lines = lines.size()
-	var max_lines = 150
+	var max_lines = 300
 	
 	# Add line numbers for AI reference
 	var numbered: Array[String] = []
@@ -99,7 +110,9 @@ static func read_file(path: String) -> String:
 		numbered.append("%3d | %s" % [i + 1, lines[i]])
 	
 	var result = "\n".join(numbered)
-	if total_lines > max_lines:
+	if is_truncated:
+		result += "\n⚠️ [FILE TRUNCATED: File exceeds 50KB limit]"
+	elif total_lines > max_lines:
 		result += "\n... (showing %d/%d lines. Use [READ_LINES:path:start-end] if you need more)" % [max_lines, total_lines]
 	else:
 		result += "\n(%d lines total)" % total_lines
